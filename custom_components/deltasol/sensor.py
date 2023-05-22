@@ -34,6 +34,7 @@ from homeassistant.const import (
     CONF_PASSWORD,
     CONF_API_KEY
 )
+from homeassistant.helpers import aiohttp_client
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
 from homeassistant.exceptions import IntegrationError
 
@@ -70,13 +71,19 @@ async def update_unique_ids(hass, data):
 async def async_setup_platform(hass, config, async_add_entities, discovery_info=None):
     """ Setup the Resol KM2, DL2/DL3, VBus/LAN, VBus/USB sensors. """
 
-    api = DeltasolApi(config.get(CONF_USERNAME), config.get(CONF_PASSWORD), config.get(CONF_HOST), config.get(CONF_API_KEY))
+    api = DeltasolApi(
+        config.get(CONF_USERNAME),
+        config.get(CONF_PASSWORD),
+        config.get(CONF_HOST),
+        config.get(CONF_API_KEY),
+        aiohttp_client.async_create_clientsession(hass)
+    )
 
     async def async_update_data():
         """ Fetch data from the Resol KM2, DL2/DL3, VBus/LAN, VBus/USB. """
         async with async_timeout.timeout(DEFAULT_TIMEOUT):
             try:
-                data = await hass.async_add_executor_job(api.fetch_data)
+                data = await api.fetch_data()
                 return data
             except IntegrationError as error:
                 _LOGGER.error(f"Stopping Resol integration due to previous error: {error}")
