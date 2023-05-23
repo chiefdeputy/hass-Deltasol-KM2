@@ -15,7 +15,6 @@ sensor:
 
 from datetime import timedelta
 
-import async_timeout
 import homeassistant.helpers.config_validation as config_validation
 import homeassistant.helpers.entity_registry as entity_registry
 import voluptuous as vol
@@ -38,7 +37,7 @@ from homeassistant.helpers import aiohttp_client
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
 from homeassistant.exceptions import IntegrationError
 
-from .const import DEFAULT_NAME, _LOGGER, DEFAULT_TIMEOUT, DOMAIN
+from .const import DEFAULT_NAME, _LOGGER, DOMAIN
 from .deltasolapi import DeltasolApi
 
 PLATFORM_SCHEMA = PLATFORM_SCHEMA.extend(
@@ -71,7 +70,7 @@ async def update_unique_ids(hass, data):
 async def async_setup_platform(hass, config, async_add_entities, discovery_info=None):
     """ Setup the Resol KM2, DL2/DL3, VBus/LAN, VBus/USB sensors. """
 
-    api = DeltasolApi(
+    api = await DeltasolApi.create(
         config.get(CONF_USERNAME),
         config.get(CONF_PASSWORD),
         config.get(CONF_HOST),
@@ -79,21 +78,11 @@ async def async_setup_platform(hass, config, async_add_entities, discovery_info=
         aiohttp_client.async_create_clientsession(hass)
     )
 
-    async def async_update_data():
-        """ Fetch data from the Resol KM2, DL2/DL3, VBus/LAN, VBus/USB. """
-        async with async_timeout.timeout(DEFAULT_TIMEOUT):
-            try:
-                data = await api.fetch_data()
-                return data
-            except IntegrationError as error:
-                _LOGGER.error(f"Stopping Resol integration due to previous error: {error}")
-                raise error
-
     coordinator = DataUpdateCoordinator(
         hass,
         _LOGGER,
         name="deltasol_sensor",
-        update_method=async_update_data,
+        update_method=api.fetch_data,
         # Polling interval. Will only be polled if there are subscribers.
         update_interval=max(config.get(CONF_SCAN_INTERVAL), timedelta(minutes=1)),
     )
@@ -102,6 +91,8 @@ async def async_setup_platform(hass, config, async_add_entities, discovery_info=
     await coordinator.async_refresh()
 
     # Find old entity_ids and convert them to the new format
+    if coordinator.data is None:
+        raise IntegrationError("No data in coordinator after refresh.")
     await update_unique_ids(hass, coordinator.data)
 
     async_add_entities(

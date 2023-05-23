@@ -3,23 +3,41 @@ Gets sensor data from Resol KM2, DL2/DL3, VBus/LAN, VBus/USB using api.
 Author: dm82m
 https://github.com/dm82m/hass-Deltasol-KM2
 """
+import asyncio
 import datetime
 import re
 from collections import namedtuple
 
+import aiohttp
+import async_timeout
+from homeassistant.exceptions import IntegrationError
+
 from .const import (
     _LOGGER,
+    DEFAULT_TIMEOUT,
     SETUP_RETRY_COUNT,
     SETUP_RETRY_PERIOD
 )
 
-import aiohttp
-import asyncio
-from homeassistant.exceptions import IntegrationError
-
 DeltasolEndpoint = namedtuple('DeltasolEndpoint', 'name, value, unit, description, bus_dest, bus_src')
 
 class DeltasolApi(object):
+
+    @classmethod
+    async def create(cls, username, password, host, api_key, websession):
+        self = DeltasolApi(username, password, host, api_key, websession)
+
+        retries = 0
+        while self.product is None and retries < SETUP_RETRY_COUNT:
+            retries += 1
+            await self.detect_product()
+            await asyncio.sleep(SETUP_RETRY_PERIOD)
+
+        if self.product is None:
+            raise IntegrationError("Could not identify Resol product. Most likely due to a connection error.")
+        return self
+
+
     """ Wrapper class for Resol KM2, DL2/DL3, VBus/LAN, VBus/USB. """
 
     def __init__(self, username, password, host, api_key, websession):
@@ -80,7 +98,7 @@ class DeltasolApi(object):
                     raise IntegrationError(error)
         except aiohttp.ClientConnectorError:
             _LOGGER.warning("Could not reach %s.", self.host)
-        except aiohttp.ClientError as e:
+        except Exception as e:
             error = f"Error detecting Resol product - {e}, please file an issue at: https://github.com/dm82m/hass-Deltasol-KM2/issues/new/choose"
             _LOGGER.error(error)
             raise IntegrationError(error)
@@ -90,29 +108,29 @@ class DeltasolApi(object):
 
     async def fetch_data(self):
         """ Use api to get data """
-        retries = 0
-        while self.product is None and retries < SETUP_RETRY_COUNT:
-            retries += 1
-            await self.detect_product()
-            await asyncio.sleep(SETUP_RETRY_PERIOD)
         if self.product is None:
             raise IntegrationError("Could not identify Resol product. Most likely due to a connection error.")
 
-        try:
-            response = {}
-            if(self.product == 'km2'):
-                response = await self.fetch_data_km2()
-            elif(self.product == 'dl2' or product == 'dl3'):
-                response = await self.fetch_data_dlx()
-            else:
-                error = f"We detected your Resol product as {self.product} and this product is currently not supported. If you want you can file an issue to support this device here: https://github.com/dm82m/hass-Deltasol-KM2/issues/new/choose"
-                _LOGGER.error(error)
-                raise IntegrationError(error)
+        async with async_timeout.timeout(DEFAULT_TIMEOUT):
+            try:
+                response = {}
+                if(self.product == 'km2'):
+                    response = await self.fetch_data_km2()
+                elif(self.product == 'dl2' or product == 'dl3'):
+                    response = await self.fetch_data_dlx()
+                else:
+                    error = f"We detected your Resol product as {self.product} and this product is currently not supported. If you want you can file an issue to support this device here: https://github.com/dm82m/hass-Deltasol-KM2/issues/new/choose"
+                    _LOGGER.error(error)
+                    raise IntegrationError(error)
 
-            return self.__parse_data(response)
+                return self.__parse_data(response)
 
-        except IntegrationError as error:
-            raise error
+            except IntegrationError as error:
+                _LOGGER.error(f"Stopping Resol integration due to previous error: {error}")
+                raise error
+
+        _LOGGER.warning("Timeout while fetching data...")
+        return {}
 
 
     async def fetch_data_km2(self):
@@ -141,6 +159,8 @@ class DeltasolApi(object):
             error = "Please re-check your username and password in your configuration!"
             _LOGGER.error(error)
             raise IntegrationError(error)
+        except Exception as e:
+            _LOGGER.debug("KM2: %s", e)
         
         return result
 
@@ -177,5 +197,7 @@ class DeltasolApi(object):
             error = "Please re-check your username and password in your configuration!"
             _LOGGER.error(error)
             raise IntegrationError(error)
+        except Exception as e:
+            _LOGGER.debug("DLx: %s", e)
 
         return result
